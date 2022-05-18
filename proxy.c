@@ -6,17 +6,14 @@
 #define MAX_OBJECT_SIZE 102400
 
 /* You won't lose style points for including this long line in your code */
-static const char *user_agent_hdr =
-    "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
-    "Firefox/10.0.3\r\n";
+static const char *user_agent_hdr = "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 Firefox/10.0.3\r\n";
 static const char *conn_hdr = "Connection: close\r\n";
 static const char *prox_hdr = "Proxy-Connection: close\r\n";
 static const char *host_hdr_format = "Host: %s\r\n";
 static const char *requestline_hdr_format = "GET %s HTTP/1.0\r\n";
 static const char *endof_hdr = "\r\n";
 
-
-
+/* Header search key */
 static const char *host_key = "Host";
 static const char *connection_key = "Connection";
 static const char *proxy_connection_key = "Proxy-Connection";
@@ -26,17 +23,21 @@ static const char *user_agent_key = "User-Agent";
 static const char *end_server_host = "localhost";   // end server의 hostname은 현재 localhost
 static const int end_server_port = 52185;           // proxy 서버의 소켓 번호 +1
 
+/* functions */
 void doit(int fd);
 void clienterror(int fd, char *cause, char *errnum, char *shortmsg, char *longmsg);
 void parse_uri(char *uri, char *host, int *port, char *path);
 void build_http_header(char *http_header, char *hostname, char *path, rio_t *client_rio);
 int connect_endServer(char *hostname, int port);
+// for thread
+void *thread(void *vargp);
 
 int main(int argc, char **argv) {
-    int listenfd, connfd;
+    int listenfd, *connfdp;
     socklen_t clientlen;
     char clienthost[MAXLINE], clientport[MAXLINE];
     struct sockaddr_storage clientaddr;
+    pthread_t tid;
 
     /* Check command line args */
     if (argc != 2) {
@@ -48,14 +49,25 @@ int main(int argc, char **argv) {
     
     while (1) {
         clientlen = sizeof(clientaddr);
-        connfd = Accept(listenfd, (SA *)&clientaddr, &clientlen);
+        connfdp = Malloc(sizeof(int));                                  // 경쟁상태 회피하기 위해 동적 할당
+        *connfdp = Accept(listenfd, (SA *)&clientaddr, &clientlen);
         
         Getnameinfo((SA *)&clientaddr, clientlen, clienthost, MAXLINE, clientport, MAXLINE, 0);
         printf("Accepted connection from (%s, %s)\n", clienthost, clientport);
-        doit(connfd);   // line:netp:tiny:doit
-        Close(connfd);  // line:netp:tiny:close
+
+        Pthread_create(&tid, NULL, thread, connfdp);
     }
     return 0;
+}
+
+/** 쓰레드 루틴 */
+void *thread(void *vargp) {
+    int connfd = *(int *)vargp;
+    Pthread_detach(pthread_self());
+    Free(vargp);
+    doit(connfd);
+    Close(connfd);
+    return NULL;
 }
 
 /** 한 개의 HTTP 트랜잭션을 처리 */
